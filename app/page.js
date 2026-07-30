@@ -143,7 +143,7 @@ export default function App() {
     setError(null);
 
     try {
-        const apiKey = ""; // API Key provided securely by the environment
+        const apiKey = "AQ.Ab8RN6LDtG5TLJOKB6Vwq4GTeeOHGyl_yqYLOAUgjZ7D8s9INQ"; // API Key provided securely by the environment
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-preview:generateContent?key=${apiKey}`;
 
         const prompt = `
