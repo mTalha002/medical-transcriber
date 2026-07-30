@@ -143,7 +143,7 @@ export default function App() {
     setError(null);
 
     try {
-        const apiKey = "AQ.Ab8RN6LDtG5TLJOKB6Vwq4GTeeOHGyl_yqYLOAUgjZ7D8s9INQ"; // API Key provided securely by the environment
+        const apiKey = ""; // API Key provided securely by the environment
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-preview:generateContent?key=${apiKey}`;
 
         const prompt = `
@@ -157,7 +157,7 @@ export default function App() {
         `;
 
         const payload = {
-            contents: [{ parts: [{ text: prompt }] }],
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
             generationConfig: {
                 responseMimeType: "application/json",
                 responseSchema: {
@@ -202,18 +202,7 @@ export default function App() {
 
     } catch (err) {
         console.error("Error processing notes:", err);
-        setError("Failed to generate notes. Please try again.");
-        // Fallback to mock data if API fails so the UI doesn't completely break for the demo
-         setTimeout(() => {
-            setMedicalRecord({
-                subjective: "Patient presented with complaints of... [Fallback Data]",
-                objective: "Vitals stable. Exam unremarkable... [Fallback Data]",
-                assessment: "1. Diagnosis pending... [Fallback Data]",
-                plan: "1. Monitor symptoms... [Fallback Data]",
-                codes: ["Z00.00 - Encounter for general adult medical examination"],
-            });
-            setError("API Error: Showing mock data as fallback.");
-         }, 500);
+        setError("Failed to generate notes. Please try again or check your connection.");
     } finally {
         setIsProcessing(false);
     }
