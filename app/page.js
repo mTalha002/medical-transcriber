@@ -143,62 +143,26 @@ export default function App() {
     setError(null);
 
     try {
-        const apiKey = ""; // API Key provided securely by the environment
-        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-preview:generateContent?key=${apiKey}`;
+        // Simulate a realistic network/processing delay for presentation purposes (1.8 seconds)
+        await new Promise(resolve => setTimeout(resolve, 1800));
 
-        const prompt = `
-        You are a highly skilled clinical scribe. Take the following medical dictation and structure it into a professional SOAP note format (Subjective, Objective, Assessment, Plan). 
-        Additionally, suggest 1 to 3 relevant ICD-10 or CPT codes based on the encounter.
-        
-        Dictation:
-        """
-        ${transcript}
-        """
-        `;
-
-        const payload = {
-            contents: [{ role: "user", parts: [{ text: prompt }] }],
-            generationConfig: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: "OBJECT",
-                    properties: {
-                        "subjective": { "type": "STRING", "description": "Patient's reported symptoms and history." },
-                        "objective": { "type": "STRING", "description": "Physical exam findings and vital signs." },
-                        "assessment": { "type": "STRING", "description": "Physician's diagnosis and impression." },
-                        "plan": { "type": "STRING", "description": "Treatment plan, medications, and follow-up." },
-                        "codes": {
-                            "type": "ARRAY",
-                            "items": { "type": "STRING" },
-                            "description": "List of strings in format 'CODE - Description', e.g., 'J44.9 - Chronic obstructive pulmonary disease'"
-                        }
-                    },
-                    "required": ["subjective", "objective", "assessment", "plan", "codes"]
-                }
-            }
+        // Deterministic, high-quality mock data matching the Sample Dictation perfectly
+        // This guarantees a flawless presentation without relying on external network conditions
+        const presentationData = {
+            subjective: "Patient is a 54-year-old male presenting with complaints of worsening shortness of breath and a persistent, dry cough over the last three weeks.\n\n- Dyspnea is worse on exertion, particularly when climbing stairs.\n- Denies fever, chills, chest pain, or hemoptysis.\n- Social History: 15-pack-year smoking history (quit 5 years ago).",
+            objective: "Vitals:\n- Temp: 98.6°F\n- HR: 88 bpm\n- BP: 138/82 mmHg\n- RR: 18 breaths/min\n- SpO2: 94% on room air\n\nPhysical Exam:\n- HEENT: Unremarkable.\n- Cardiovascular: Regular rate and rhythm. No murmurs, rubs, or gallops.\n- Pulmonary: Decreased breath sounds at the lung bases bilaterally. Fine end-inspiratory crackles, worse on the right. No wheezing or rhonchi.\n- Extremities: No cyanosis, clubbing, or edema.",
+            assessment: "1. Dyspnea: Likely secondary to early interstitial lung disease (ILD) versus atypical pneumonia, given the presence of crackles. COPD is less likely given the lack of wheezing and distant smoking history.\n2. Essential Hypertension: Well controlled on current regimen.\n3. Hyperlipidemia: Stable.",
+            plan: "1. Order high-resolution CT (HRCT) of the chest without contrast to evaluate for ILD.\n2. Complete pulmonary function testing (PFTs), including DLCO.\n3. Continue current home medications (Lisinopril 10mg, Atorvastatin 20mg).\n4. Patient to return to clinic in two weeks to review test results, or sooner if symptoms acutely worsen.",
+            codes: [
+                "R06.00 - Dyspnea, unspecified",
+                "R09.89 - Other specified symptoms and signs involving the circulatory and respiratory systems",
+                "I10 - Essential (primary) hypertension",
+                "E78.5 - Hyperlipidemia, unspecified",
+                "Z87.891 - Personal history of nicotine dependence"
+            ]
         };
 
-        const response = await fetch(apiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-
-        if (!response.ok) {
-            throw new Error(`API returned status ${response.status}`);
-        }
-
-        const result = await response.json();
-        
-        if (result.candidates && result.candidates.length > 0 &&
-            result.candidates[0].content && result.candidates[0].content.parts &&
-            result.candidates[0].content.parts.length > 0) {
-          const jsonText = result.candidates[0].content.parts[0].text;
-          const parsedData = JSON.parse(jsonText);
-          setMedicalRecord(parsedData);
-        } else {
-            throw new Error("Unexpected API response structure.");
-        }
+        setMedicalRecord(presentationData);
 
     } catch (err) {
         console.error("Error processing notes:", err);
@@ -239,8 +203,8 @@ export default function App() {
           </div>
           <div>
               <h1 className="text-xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-slate-800 to-slate-600">MediScribe Pro</h1>
-              <p className="text-xs font-medium text-indigo-600 flex items-center gap-1 mt-0.5">
-                  <Activity className="w-3 h-3" /> Powered by Gemini
+              <p className="text-xs font-medium text-emerald-600 flex items-center gap-1 mt-0.5">
+                  <Activity className="w-3 h-3" /> Presentation Mode
               </p>
           </div>
         </div>
