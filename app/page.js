@@ -19,7 +19,8 @@ export default function Home() {
   const recognitionRef = useRef(null);
   
   // SECURE WAY: Vercel injects this via Environment Variables
-  const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY; 
+  // Using a fallback for the browser preview environment where process might not be defined.
+  const apiKey = typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_GEMINI_API_KEY : ''; 
 
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
