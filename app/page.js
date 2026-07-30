@@ -1,514 +1,474 @@
 'use client';
+
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Mic, Square, FileText, Shield, RefreshCw, Copy, Check, AlertTriangle, 
-  Pill, HeartPulse, Stethoscope, Save, User, LayoutDashboard, Calendar, 
-  Settings, LogOut, FileSignature, Microscope, Receipt, MessageSquare, 
-  Activity, Clock, ChevronRight, CheckCircle2
+  Mic, 
+  Square, 
+  FileText, 
+  Stethoscope, 
+  RefreshCcw, 
+  Loader2, 
+  AlertCircle, 
+  CheckCircle2, 
+  Copy, 
+  Check, 
+  Wand2,
+  Activity
 } from 'lucide-react';
 
-export default function Home() {
-  const [isRecording, setIsRecording] = useState(false);
+export default function App() {
   const [transcript, setTranscript] = useState('');
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [activeTab, setActiveTab] = useState('clinical');
-  const [copiedSection, setCopiedSection] = useState(null);
-  
+  const [isRecording, setIsRecording] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [medicalRecord, setMedicalRecord] = useState(null);
+  const [error, setError] = useState(null);
+  const [copied, setCopied] = useState(false);
   
   const recognitionRef = useRef(null);
-  
-  // SECURE WAY: Vercel injects this via Environment Variables
-  // Using a fallback for the browser preview environment where process might not be defined.
-  const apiKey = typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_GEMINI_API_KEY : ''; 
+  const textAreaRef = useRef(null);
+  const scrollContainerRef = useRef(null);
 
   useEffect(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      const rec = new SpeechRecognition();
-      rec.continuous = true;
-      rec.interimResults = true;
-      rec.lang = 'en-US';
+    // Check if window is defined (browser environment)
+    if (typeof window !== 'undefined') {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      
+      if (SpeechRecognition) {
+        recognitionRef.current = new SpeechRecognition();
+        recognitionRef.current.continuous = true;
+        recognitionRef.current.interimResults = true;
 
-      rec.onresult = (event) => {
-        let resultText = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            resultText += event.results[i][0].transcript + ' ';
+        recognitionRef.current.onresult = (event) => {
+          let currentTranscript = '';
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            currentTranscript += event.results[i][0].transcript;
           }
-        }
-        if (resultText) {
-          setTranscript((prev) => prev + resultText);
-        }
-      };
+          setTranscript((prev) => {
+             // Basic heuristic to avoid duplicating if we just started speaking again
+             // In a production app, interim vs final results need more robust merging.
+             const isFinal = event.results[event.results.length - 1].isFinal;
+             if (isFinal) {
+                 return prev + (prev.length > 0 && !prev.endsWith(' ') ? ' ' : '') + currentTranscript;
+             }
+             return currentTranscript; // Show interim while speaking (replaces previous interim)
+          });
+        };
 
-      rec.onerror = (e) => console.error("Speech error: ", e);
-      recognitionRef.current = rec;
-    }
-  }, []);
+        recognitionRef.current.onerror = (event) => {
+          console.error('Speech recognition error', event.error);
+          if (event.error !== 'no-speech') {
+              setError(`Microphone error: ${event.error}. Please check permissions.`);
+              setIsRecording(false);
+          }
+        };
 
-  const handleMicToggle = () => {
-    if (!recognitionRef.current) {
-      alert("Speech recognition is not supported or permitted in this browser version.");
-      return;
-    }
-    if (isRecording) {
-      recognitionRef.current.stop();
-      setIsRecording(false);
-    } else {
-      recognitionRef.current.start();
-      setIsRecording(true);
-    }
-  };
-
-  const generateClinicalRecord = async () => {
-    if (!transcript.trim()) return;
-    setIsGenerating(true);
-    
-    try {
-      if (!apiKey || apiKey === "") {
-         throw new Error("No API key provided.");
+        recognitionRef.current.onend = () => {
+          // If it stopped unexpectedly, but we still think we are recording, restart it.
+          // This handles the automatic stopping behavior of webkitSpeechRecognition after a pause.
+          if (isRecording) {
+            try {
+                recognitionRef.current.start();
+            } catch (e) {
+                console.error("Failed to restart recognition", e);
+                setIsRecording(false);
+            }
+          } else {
+             setIsRecording(false);
+          }
+        };
+      } else {
+        setError('Speech recognition is not supported in this browser. Please use Chrome or Edge for voice dictation.');
       }
+    }
+    
+    return () => {
+      if (recognitionRef.current) {
+        // Prevent onend from restarting it when component unmounts
+        recognitionRef.current.onend = null; 
+        recognitionRef.current.stop();
+      }
+    };
+  }, []); // Empty dependency array ensures this runs once
 
-      const prompt = `You are an expert enterprise medical AI co-pilot. Analyze the following clinician dictation and extract a comprehensive medical record.
-      Dictation: "${transcript}"
-      
-      Respond ONLY with a valid JSON object using this exact schema:
-      {
-        "soap": {
-          "subjective": "Thorough HPI and patient symptoms",
-          "objective": "Physical exam findings and objective data",
-          "assessment": "Primary clinical diagnosis/impression",
-          "plan": "Detailed treatment and management plan"
-        },
-        "vitals": ["List any vital signs mentioned"],
-        "medications": [
-          {"name": "Drug name", "dosage": "Dosage/Route", "instructions": "Sig/Instructions"}
-        ],
-        "orders": {
-          "labs": ["Suggested or dictated lab tests"],
-          "imaging": ["Suggested or dictated imaging (X-Ray, MRI, etc)"]
-        },
-        "billing": {
-          "icd10": [{"code": "Code", "description": "Description"}],
-          "cpt": [{"code": "Code", "description": "Evaluation/Procedure code"}]
-        },
-        "differential_diagnosis": ["Top 2-3 alternative diagnoses to consider"],
-        "patient_handout": "A 6th-grade reading level summary speaking directly to the patient about their visit, diagnosis, and what they need to do next.",
-        "warnings": ["Clinical red flags, abnormal vitals, or contraindications"]
-      }`;
+  useEffect(() => {
+    // Auto-resize textarea height
+    if (textAreaRef.current) {
+      textAreaRef.current.style.height = 'auto';
+      textAreaRef.current.style.height = `${textAreaRef.current.scrollHeight}px`;
+    }
+  }, [transcript]);
 
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }]
-        })
-      });
+  useEffect(() => {
+     // Scroll the output container if new record arrives
+     if (medicalRecord && scrollContainerRef.current) {
+         scrollContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+     }
+  }, [medicalRecord])
 
-      if (!response.ok) throw new Error("API call failed");
+  const loadSampleDictation = () => {
+    const sampleText = "Patient is a 54-year-old male presenting today with complaints of worsening shortness of breath and a persistent, dry cough over the last three weeks. He notes the dyspnea is worse on exertion, particularly when climbing the stairs to his bedroom. He denies any fever, chills, chest pain, or hemoptysis. He does report a 15-pack-year smoking history but states he quit 5 years ago. Past medical history is significant for hypertension, managed on Lisinopril 10mg daily, and hyperlipidemia on Atorvastatin 20mg daily. On physical exam, vitals are: temperature 98.6, heart rate 88, blood pressure 138/82, respiratory rate 18, and oxygen saturation 94% on room air. HEENT is unremarkable. Cardiovascular exam reveals a regular rate and rhythm with no murmurs, rubs, or gallops. Pulmonary exam is notable for decreased breath sounds at the lung bases bilaterally and fine end-inspiratory crackles, worse on the right. No wheezing or rhonchi. Extremities show no cyanosis, clubbing, or edema. Assessment: 1. Dyspnea, likely secondary to early interstitial lung disease versus atypical pneumonia, given the crackles. COPD less likely given the lack of wheezing and distant smoking history. 2. Hypertension, well controlled. 3. Hyperlipidemia, stable. Plan: 1. Order a high-resolution CT of the chest without contrast to evaluate for ILD. 2. Complete pulmonary function testing including DLCO. 3. Continue current home medications. 4. Patient to return to clinic in two weeks to review test results, sooner if symptoms acutely worsen.";
+    setTranscript(sampleText);
+    setMedicalRecord(null);
+  };
 
-      const data = await response.json();
-      let jsonString = data.candidates[0].content.parts[0].text;
-      jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
-      
-      setMedicalRecord(JSON.parse(jsonString));
-      setIsGenerating(false);
-      return;
-    } catch (error) {
-      console.error("Gemini AI Error. Falling back to mock data...", error);
-      
-      setTimeout(() => {
-        setMedicalRecord({
-          soap: {
-            subjective: transcript || "Patient reports ongoing symptoms...",
-            objective: "Vitals stable. No acute distress.",
-            assessment: "Clinical impression requires further workup.",
-            plan: "Conservative management and follow-up."
-          },
-          vitals: ["BP 120/80", "HR 72"],
-          medications: [{ name: "Acetaminophen", dosage: "500mg PO", instructions: "Q6H PRN pain" }],
-          orders: { labs: ["CBC", "CMP"], imaging: ["None indicated"] },
-          billing: { 
-            icd10: [{ code: "R69", description: "Illness, unspecified" }],
-            cpt: [{ code: "99213", description: "Outpatient visit, established patient" }]
-          },
-          differential_diagnosis: ["Viral syndrome", "Fatigue"],
-          patient_handout: "You were seen today for your symptoms. Please take your medications as prescribed and rest. Call the clinic if things get worse.",
-          warnings: ["Monitor for fever"]
-        });
-        setIsGenerating(false);
-      }, 1500);
+  const toggleRecording = () => {
+    if (error && error.includes('not supported')) return; 
+
+    if (isRecording) {
+      setIsRecording(false); // State updates first so onend knows not to restart
+      if (recognitionRef.current) {
+          recognitionRef.current.stop();
+      }
+    } else {
+      setError(null);
+      try {
+        if (recognitionRef.current) {
+            recognitionRef.current.start();
+            setIsRecording(true);
+        } else {
+             setError("Microphone access is not available.");
+        }
+      } catch (err) {
+        console.error("Start error:", err);
+        // If it's already started, this throws an error. We can ignore it safely.
+      }
     }
   };
 
-  const clearAll = () => {
+  const processNotes = async () => {
+    if (!transcript.trim()) return;
+    
+    setIsProcessing(true);
+    setMedicalRecord(null);
+    setError(null);
+
+    try {
+        const apiKey = ""; // API Key provided securely by the environment
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-preview:generateContent?key=${apiKey}`;
+
+        const prompt = `
+        You are a highly skilled clinical scribe. Take the following medical dictation and structure it into a professional SOAP note format (Subjective, Objective, Assessment, Plan). 
+        Additionally, suggest 1 to 3 relevant ICD-10 or CPT codes based on the encounter.
+        
+        Dictation:
+        """
+        ${transcript}
+        """
+        `;
+
+        const payload = {
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: "OBJECT",
+                    properties: {
+                        "subjective": { "type": "STRING", "description": "Patient's reported symptoms and history." },
+                        "objective": { "type": "STRING", "description": "Physical exam findings and vital signs." },
+                        "assessment": { "type": "STRING", "description": "Physician's diagnosis and impression." },
+                        "plan": { "type": "STRING", "description": "Treatment plan, medications, and follow-up." },
+                        "codes": {
+                            "type": "ARRAY",
+                            "items": { "type": "STRING" },
+                            "description": "List of strings in format 'CODE - Description', e.g., 'J44.9 - Chronic obstructive pulmonary disease'"
+                        }
+                    },
+                    "required": ["subjective", "objective", "assessment", "plan", "codes"]
+                }
+            }
+        };
+
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            throw new Error(`API returned status ${response.status}`);
+        }
+
+        const result = await response.json();
+        
+        if (result.candidates && result.candidates.length > 0 &&
+            result.candidates[0].content && result.candidates[0].content.parts &&
+            result.candidates[0].content.parts.length > 0) {
+          const jsonText = result.candidates[0].content.parts[0].text;
+          const parsedData = JSON.parse(jsonText);
+          setMedicalRecord(parsedData);
+        } else {
+            throw new Error("Unexpected API response structure.");
+        }
+
+    } catch (err) {
+        console.error("Error processing notes:", err);
+        setError("Failed to generate notes. Please try again.");
+        // Fallback to mock data if API fails so the UI doesn't completely break for the demo
+         setTimeout(() => {
+            setMedicalRecord({
+                subjective: "Patient presented with complaints of... [Fallback Data]",
+                objective: "Vitals stable. Exam unremarkable... [Fallback Data]",
+                assessment: "1. Diagnosis pending... [Fallback Data]",
+                plan: "1. Monitor symptoms... [Fallback Data]",
+                codes: ["Z00.00 - Encounter for general adult medical examination"],
+            });
+            setError("API Error: Showing mock data as fallback.");
+         }, 500);
+    } finally {
+        setIsProcessing(false);
+    }
+  };
+
+  const copyToClipboard = () => {
+    if (!medicalRecord) return;
+    
+    const textToCopy = `SUBJECTIVE:\n${medicalRecord.subjective}\n\nOBJECTIVE:\n${medicalRecord.objective}\n\nASSESSMENT:\n${medicalRecord.assessment}\n\nPLAN:\n${medicalRecord.plan}\n\nCODES:\n${medicalRecord.codes.join(', ')}`;
+    
+    navigator.clipboard.writeText(textToCopy).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  const resetAll = () => {
+    if (isRecording) {
+      toggleRecording();
+    }
     setTranscript('');
     setMedicalRecord(null);
-    setActiveTab('clinical');
-  };
-
-  const copyToClipboard = (text, id) => {
-    navigator.clipboard.writeText(text);
-    setCopiedSection(id);
-    setTimeout(() => setCopiedSection(null), 2000);
+    setError(null);
   };
 
   return (
-    <div className="flex h-screen bg-slate-50 text-slate-900 font-sans overflow-hidden selection:bg-indigo-100 selection:text-indigo-900">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 text-slate-800 font-sans flex flex-col selection:bg-indigo-100 selection:text-indigo-900">
       
-      {/* Enterprise Sidebar */}
-      <aside className="w-20 lg:w-64 bg-slate-900 text-slate-300 flex flex-col transition-all duration-300 z-20 shadow-xl border-r border-slate-800">
-        <div className="h-16 flex items-center justify-center lg:justify-start lg:px-6 border-b border-slate-800 bg-slate-950">
-          <Activity className="h-7 w-7 text-indigo-400 shrink-0" />
-          <span className="ml-3 font-bold text-xl text-white hidden lg:block tracking-tight">MediScribe<span className="text-indigo-400">.ai</span></span>
+      {/* Premium Header */}
+      <header className="bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-4 flex items-center justify-between sticky top-0 z-20 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="bg-gradient-to-br from-indigo-600 to-blue-600 p-2.5 rounded-xl shadow-lg shadow-indigo-200 flex items-center justify-center">
+            <Stethoscope className="w-5 h-5 text-white" />
+          </div>
+          <div>
+              <h1 className="text-xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-slate-800 to-slate-600">MediScribe Pro</h1>
+              <p className="text-xs font-medium text-indigo-600 flex items-center gap-1 mt-0.5">
+                  <Activity className="w-3 h-3" /> Powered by Gemini
+              </p>
+          </div>
         </div>
-        
-        <nav className="flex-1 py-6 flex flex-col gap-2 px-3">
-          <NavItem icon={<LayoutDashboard />} label="Dashboard" active />
-          <NavItem icon={<Calendar />} label="Schedule" />
-          <NavItem icon={<User />} label="Patient Directory" />
-          <NavItem icon={<FileSignature />} label="Chart Review" />
-        </nav>
-
-        <div className="p-4 border-t border-slate-800">
-          <NavItem icon={<Settings />} label="Settings" />
-          <NavItem icon={<LogOut />} label="Logout" />
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={loadSampleDictation}
+            className="text-sm font-medium text-slate-600 bg-white hover:text-indigo-700 transition-all flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-200 hover:border-indigo-200 hover:shadow-sm hover:bg-indigo-50/50"
+          >
+            <FileText className="w-4 h-4" />
+            Load Sample
+          </button>
+          <button 
+            onClick={resetAll}
+            className="text-sm font-medium text-slate-600 bg-white hover:text-slate-900 transition-all flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 hover:shadow-sm"
+          >
+            <RefreshCcw className="w-4 h-4" />
+            New Encounter
+          </button>
         </div>
-      </aside>
+      </header>
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      {/* Main Content Workspace */}
+      <main className="flex-1 max-w-[1400px] w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8 items-stretch">
         
-        {/* Top Patient Context Header */}
-        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 shadow-sm z-10 shrink-0">
-          <div className="flex items-center gap-4">
-            <div className="bg-indigo-50 p-2 rounded-full border border-indigo-100">
-              <User className="h-5 w-5 text-indigo-600" />
-            </div>
+        {/* Left Column: Input & Dictation Area */}
+        <section className="flex flex-col bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden h-[calc(100vh-7rem)] lg:h-[calc(100vh-8rem)]">
+          
+          <div className="px-6 py-5 border-b border-slate-100 bg-white flex justify-between items-center z-10">
             <div>
-              <h2 className="text-sm font-bold text-slate-800">Doe, John (DOB: 05/14/1980)</h2>
-              <div className="flex items-center gap-3 text-xs text-slate-500 font-medium">
-                <span>MRN: 884-92A</span>
-                <span className="w-1 h-1 rounded-full bg-slate-300"></span>
-                <span>Male, 44 Yrs</span>
-                <span className="w-1 h-1 rounded-full bg-slate-300"></span>
-                <span className="text-amber-600 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> Penicillin Allergy</span>
-              </div>
-            </div>
-          </div>
-          
-          <div className="flex items-center gap-3">
-            <div className="hidden md:flex items-center gap-2 bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-md border border-indigo-100 text-xs font-bold">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
-              </span>
-              Gemini LLM Active
-            </div>
-            <button className="bg-slate-900 text-white px-4 py-1.5 rounded-md text-sm font-semibold hover:bg-slate-800 transition shadow-sm flex items-center gap-2">
-              <Save className="h-4 w-4" /> Save Chart
-            </button>
-          </div>
-        </header>
-
-        {/* Split Workarea */}
-        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-          
-          {/* LEFT: Dictation Panel */}
-          <div className="w-full lg:w-[40%] bg-white border-r border-slate-200 flex flex-col z-0">
-            <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-              <h3 className="font-semibold text-slate-700 flex items-center gap-2 text-sm uppercase tracking-wider">
-                <Mic className="h-4 w-4 text-indigo-500" /> Clinical Dictation
-              </h3>
-              {transcript && (
-                <button onClick={clearAll} className="text-xs text-slate-400 hover:text-red-500 flex items-center gap-1 font-medium transition-colors">
-                  <RefreshCw className="h-3 w-3" /> Reset
-                </button>
-              )}
+                <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                Dictation Capture
+                </h2>
+                <p className="text-sm text-slate-500 mt-1">Speak clearly or type notes below.</p>
             </div>
             
-            <div className="flex-1 p-4 relative">
-              <textarea
-                value={transcript}
-                onChange={(e) => setTranscript(e.target.value)}
-                placeholder="Click 'Start Dictation' and speak normally. The AI will extract vitals, medications, orders, and build the SOAP note..."
-                className="w-full h-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all text-slate-700 leading-relaxed font-normal resize-none placeholder:text-slate-400"
-              />
-              {isRecording && (
-                <div className="absolute top-8 right-8 flex items-center gap-2 bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs font-bold shadow-sm animate-pulse">
-                  <span className="h-2 w-2 bg-red-500 rounded-full"></span> RECORDING
-                </div>
-              )}
-            </div>
-
-            <div className="p-4 bg-white border-t border-slate-100 flex gap-3 shrink-0">
-              <button
-                onClick={handleMicToggle}
-                className={`flex-1 py-2.5 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 transition-all shadow-sm text-sm ${
-                  isRecording 
-                    ? 'bg-red-50 text-red-600 border border-red-200 hover:bg-red-100' 
-                    : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300'
-                }`}
-              >
-                {isRecording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-                {isRecording ? 'Stop' : 'Dictate'}
-              </button>
-
-              <button
-                onClick={generateClinicalRecord}
-                disabled={!transcript || isGenerating}
-                className="flex-[2] bg-indigo-600 text-white py-2.5 px-4 rounded-lg font-semibold hover:bg-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-md text-sm"
-              >
-                {isGenerating ? (
-                  <><RefreshCw className="h-4 w-4 animate-spin" /> Synthesizing Data...</>
+            {/* Visualizer / Recording Indicator */}
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full transition-all duration-300 ${isRecording ? 'bg-red-50 text-red-600 border border-red-100 shadow-inner' : 'bg-slate-50 text-slate-400 border border-slate-100'}`}>
+                {isRecording ? (
+                    <>
+                        <div className="flex gap-0.5 items-center h-4">
+                            <div className="w-1 bg-red-500 rounded-full h-2 animate-[bounce_1s_infinite] delay-75"></div>
+                            <div className="w-1 bg-red-500 rounded-full h-4 animate-[bounce_1s_infinite]"></div>
+                            <div className="w-1 bg-red-500 rounded-full h-3 animate-[bounce_1s_infinite] delay-150"></div>
+                        </div>
+                        <span className="text-xs font-bold uppercase tracking-wider ml-1">Live</span>
+                    </>
                 ) : (
-                  <><FileSignature className="h-4 w-4" /> Generate Smart Chart</>
+                    <>
+                        <Mic className="w-3.5 h-3.5" />
+                        <span className="text-xs font-semibold uppercase tracking-wider">Ready</span>
+                    </>
                 )}
-              </button>
             </div>
           </div>
 
-          {/* RIGHT: AI Output Panel */}
-          <div className="flex-1 bg-slate-50 flex flex-col overflow-hidden relative">
-            {!medicalRecord && !isGenerating ? (
-              <div className="flex-1 flex flex-col items-center justify-center p-8 text-center h-full">
-                <div className="bg-white p-6 rounded-full shadow-sm border border-slate-100 mb-6 relative">
-                  <div className="absolute inset-0 border-2 border-indigo-100 rounded-full animate-ping opacity-20"></div>
-                  <Activity className="h-12 w-12 text-indigo-300" />
-                </div>
-                <h3 className="text-xl font-bold text-slate-700 mb-2">Awaiting Encouter Data</h3>
-                <p className="text-slate-500 max-w-md text-sm leading-relaxed">
-                  Dictate the patient encounter on the left. Our enterprise AI will automatically structure notes, extract billing codes, and generate patient instructions.
-                </p>
-              </div>
-            ) : isGenerating ? (
-               <div className="flex-1 flex flex-col items-center justify-center bg-slate-50/80 backdrop-blur-sm z-10">
-                 <div className="w-16 h-16 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-4"></div>
-                 <p className="text-indigo-800 font-semibold animate-pulse">Gemini AI analyzing clinical context...</p>
-               </div>
-            ) : (
-              <div className="flex-1 flex flex-col overflow-hidden">
-                
-                {/* Custom Tab Navigation */}
-                <div className="bg-white border-b border-slate-200 px-4 pt-4 flex gap-6 shrink-0 overflow-x-auto no-scrollbar">
-                  <TabButton id="clinical" icon={<FileText />} label="Clinical Note" activeTab={activeTab} setActiveTab={setActiveTab} />
-                  <TabButton id="orders" icon={<Pill />} label="Orders & Meds" activeTab={activeTab} setActiveTab={setActiveTab} />
-                  <TabButton id="billing" icon={<Receipt />} label="Coding (ICD/CPT)" activeTab={activeTab} setActiveTab={setActiveTab} />
-                  <TabButton id="patient" icon={<MessageSquare />} label="Patient Handout" activeTab={activeTab} setActiveTab={setActiveTab} />
-                </div>
+          {error && (
+            <div className="m-4 mb-0 p-4 bg-red-50/80 border border-red-200 rounded-xl flex items-start gap-3 text-red-700 text-sm animate-in slide-in-from-top-2">
+              <AlertCircle className="w-5 h-5 shrink-0 text-red-500" />
+              <p className="leading-relaxed">{error}</p>
+            </div>
+          )}
 
-                {/* Tab Content Area */}
-                <div className="flex-1 overflow-y-auto p-6 scroll-smooth">
-                  <div className="max-w-4xl mx-auto space-y-6">
-                    
-                    {/* --- TAB 1: CLINICAL NOTE (SOAP) --- */}
-                    {activeTab === 'clinical' && (
-                      <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                        {/* Warnings Banner */}
-                        {medicalRecord.warnings?.length > 0 && (
-                          <div className="bg-rose-50 border-l-4 border-rose-500 rounded-r-lg p-4 shadow-sm flex gap-3 items-start">
-                            <AlertTriangle className="h-5 w-5 text-rose-600 shrink-0" />
-                            <div>
-                              <h4 className="text-sm font-bold text-rose-800 mb-1">Clinical Alerts Identified</h4>
-                              <ul className="list-disc list-inside text-sm text-rose-700 space-y-0.5">
-                                {medicalRecord.warnings.map((w, i) => <li key={i}>{w}</li>)}
-                              </ul>
-                            </div>
-                          </div>
-                        )}
+          <div className="flex-1 p-6 overflow-y-auto relative bg-slate-50/30">
+            <textarea
+                ref={textAreaRef}
+                value={transcript}
+                onChange={(e) => setTranscript(e.target.value)}
+                placeholder="Patient presents today complaining of..."
+                className="w-full min-h-full resize-none outline-none text-slate-700 text-lg leading-relaxed placeholder:text-slate-300 bg-transparent focus:ring-0"
+            />
+          </div>
 
-                        {/* SOAP Structure */}
-                        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-                          {Object.entries({ subjective: 'Subjective', objective: 'Objective', assessment: 'Assessment', plan: 'Plan' }).map(([key, label], idx) => (
-                            <div key={key} className={`p-5 group ${idx !== 0 ? 'border-t border-slate-100' : ''}`}>
-                              <div className="flex justify-between items-center mb-2">
-                                <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                                  <span className="bg-indigo-100 text-indigo-700 w-6 h-6 rounded flex items-center justify-center text-xs">{label.charAt(0)}</span>
-                                  {label}
-                                </h3>
-                                <button onClick={() => copyToClipboard(medicalRecord.soap[key], key)} className="text-slate-400 hover:text-indigo-600 transition p-1">
-                                  {copiedSection === key ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
-                                </button>
-                              </div>
-                              <p className="text-slate-600 text-sm leading-relaxed whitespace-pre-wrap pl-8">
-                                {medicalRecord.soap[key]}
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                        
-                        {/* Differential Diagnosis */}
-                        {medicalRecord.differential_diagnosis?.length > 0 && (
-                          <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-5">
-                            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-3 flex items-center gap-2">
-                              <Activity className="h-4 w-4 text-indigo-500" /> Differential Diagnosis (DDx)
-                            </h3>
-                            <div className="flex flex-wrap gap-2">
-                              {medicalRecord.differential_diagnosis.map((ddx, i) => (
-                                <span key={i} className="bg-slate-100 text-slate-700 px-3 py-1 rounded-full text-sm border border-slate-200">{ddx}</span>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
+          <div className="p-5 border-t border-slate-100 bg-white flex flex-col sm:flex-row gap-3">
+            <button
+              onClick={toggleRecording}
+              className={`flex-1 py-3.5 px-5 rounded-xl font-semibold flex items-center justify-center gap-2.5 transition-all duration-200 shadow-sm ${
+                isRecording 
+                  ? 'bg-red-50 text-red-600 border-2 border-red-200 hover:bg-red-100 hover:border-red-300' 
+                  : 'bg-white text-slate-700 border-2 border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              {isRecording ? <Square className="w-5 h-5 fill-current" /> : <Mic className="w-5 h-5 text-slate-500" />}
+              {isRecording ? 'Stop Recording' : 'Start Dictation'}
+            </button>
+            
+            <button
+              onClick={processNotes}
+              disabled={!transcript.trim() || isProcessing}
+              className="flex-1 py-3.5 px-5 rounded-xl font-semibold flex items-center justify-center gap-2.5 bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-200 hover:shadow-lg hover:from-indigo-700 hover:to-blue-700 transition-all duration-200 disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed group"
+            >
+              {isProcessing ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                  <Wand2 className="w-5 h-5 group-hover:rotate-12 transition-transform" />
+              )}
+              {isProcessing ? 'Structuring Note...' : 'Generate AI Note'}
+            </button>
+          </div>
+        </section>
 
-                    {/* --- TAB 2: ORDERS & MEDS --- */}
-                    {activeTab === 'orders' && (
-                      <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                        {/* Vitals */}
-                        <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-5">
-                          <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-4 flex items-center gap-2">
-                            <HeartPulse className="h-4 w-4 text-rose-500" /> Extracted Vitals
-                          </h3>
-                          {medicalRecord.vitals?.length > 0 ? (
-                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                              {medicalRecord.vitals.map((v, i) => (
-                                <div key={i} className="bg-slate-50 border border-slate-200 p-3 rounded-lg text-sm font-medium text-slate-700 text-center shadow-sm">
-                                  {v}
-                                </div>
-                              ))}
-                            </div>
-                          ) : <p className="text-sm text-slate-500 italic">No vitals dictated.</p>}
-                        </div>
-
-                        {/* Medications */}
-                        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-                          <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
-                            <Pill className="h-4 w-4 text-indigo-600" />
-                            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">Prescriptions</h3>
-                          </div>
-                          {medicalRecord.medications?.length > 0 ? (
-                            <div className="divide-y divide-slate-100">
-                              {medicalRecord.medications.map((med, i) => (
-                                <div key={i} className="p-4 flex justify-between items-center hover:bg-slate-50 transition">
-                                  <div>
-                                    <p className="font-bold text-slate-800">{med.name} <span className="text-indigo-600 ml-1">{med.dosage}</span></p>
-                                    <p className="text-sm text-slate-500 mt-0.5">{med.instructions}</p>
-                                  </div>
-                                  <button className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded hover:bg-indigo-100 transition">E-Prescribe</button>
-                                </div>
-                              ))}
-                            </div>
-                          ) : <div className="p-4 text-sm text-slate-500 italic">No medications prescribed.</div>}
-                        </div>
-
-                        {/* Labs & Imaging */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                           <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-5">
-                              <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-3 flex items-center gap-2">
-                                <Microscope className="h-4 w-4 text-teal-600" /> Lab Orders
-                              </h3>
-                              <ul className="space-y-2">
-                                {medicalRecord.orders?.labs?.map((lab, i) => (
-                                  <li key={i} className="flex items-center gap-2 text-sm text-slate-700"><div className="w-1.5 h-1.5 rounded-full bg-teal-500"></div>{lab}</li>
-                                )) || <li className="text-sm text-slate-500 italic">None</li>}
-                              </ul>
-                           </div>
-                           <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-5">
-                              <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-3 flex items-center gap-2">
-                                <Activity className="h-4 w-4 text-blue-600" /> Imaging
-                              </h3>
-                              <ul className="space-y-2">
-                                {medicalRecord.orders?.imaging?.map((img, i) => (
-                                  <li key={i} className="flex items-center gap-2 text-sm text-slate-700"><div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>{img}</li>
-                                )) || <li className="text-sm text-slate-500 italic">None</li>}
-                              </ul>
-                           </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* --- TAB 3: BILLING --- */}
-                    {activeTab === 'billing' && (
-                      <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                        <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
-                          <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-4 border-b border-slate-100 pb-2">ICD-10 Diagnostic Codes</h3>
-                          <div className="space-y-3">
-                            {medicalRecord.billing?.icd10?.map((code, i) => (
-                              <div key={i} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
-                                <div className="flex items-center gap-3">
-                                  <span className="bg-white text-indigo-700 font-mono font-bold px-2.5 py-1 rounded border border-indigo-100 shadow-sm">{code.code}</span>
-                                  <span className="text-sm text-slate-700 font-medium">{code.description}</span>
-                                </div>
-                                <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-                              </div>
-                            ))}
-                          </div>
-
-                          <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider mt-8 mb-4 border-b border-slate-100 pb-2">CPT Procedural Codes</h3>
-                          <div className="space-y-3">
-                            {medicalRecord.billing?.cpt?.map((code, i) => (
-                              <div key={i} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
-                                <div className="flex items-center gap-3">
-                                  <span className="bg-white text-teal-700 font-mono font-bold px-2.5 py-1 rounded border border-teal-100 shadow-sm">{code.code}</span>
-                                  <span className="text-sm text-slate-700 font-medium">{code.description}</span>
-                                </div>
-                                <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* --- TAB 4: PATIENT HANDOUT --- */}
-                    {activeTab === 'patient' && (
-                      <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-                           <div className="bg-indigo-50 border-b border-indigo-100 p-5 flex justify-between items-center">
-                             <div>
-                                <h3 className="font-bold text-indigo-900 text-lg">Visit Summary for John Doe</h3>
-                                <p className="text-indigo-700 text-sm mt-1">Generated by MediScribe AI to be easily understood.</p>
-                             </div>
-                             <button onClick={() => window.print()} className="bg-white text-indigo-700 px-4 py-2 rounded-lg text-sm font-semibold border border-indigo-200 hover:bg-indigo-100 transition shadow-sm">
-                               Print for Patient
-                             </button>
-                           </div>
-                           <div className="p-8">
-                              <p className="text-slate-700 leading-loose text-lg whitespace-pre-wrap font-serif">
-                                {medicalRecord.patient_handout}
-                              </p>
-                           </div>
-                        </div>
-                      </div>
-                    )}
-
-                  </div>
-                </div>
-              </div>
+        <section className="flex flex-col bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden h-[calc(100vh-7rem)] lg:h-[calc(100vh-8rem)] relative">
+          
+          <div className="px-6 py-5 border-b border-slate-100 bg-white flex justify-between items-center z-10">
+             <div>
+                <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                Structured Output
+                </h2>
+                <p className="text-sm text-slate-500 mt-1">SOAP Note format with coding.</p>
+            </div>
+            
+            {medicalRecord && (
+                <button
+                    onClick={copyToClipboard}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                        copied 
+                        ? 'bg-green-50 text-green-700 border border-green-200' 
+                        : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 hover:border-slate-300 shadow-sm'
+                    }`}
+                >
+                    {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    {copied ? 'Copied' : 'Copy Text'}
+                </button>
             )}
           </div>
 
-        </div>
-      </div>
-    </div>
-  );
-}
+          <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
+            {!medicalRecord && !isProcessing ? (
+              <div className="h-full flex flex-col items-center justify-center text-center px-4 max-w-sm mx-auto">
+                <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mb-6 shadow-inner border border-indigo-100">
+                  <FileText className="w-10 h-10 text-indigo-300" />
+                </div>
+                <h3 className="text-lg font-semibold text-slate-700 mb-2">Ready to Structure</h3>
+                <p className="text-slate-500 leading-relaxed">
+                  Record or type a clinical narrative on the left, then click <strong>Generate AI Note</strong> to organize it into a professional SOAP format.
+                </p>
+              </div>
+            ) : isProcessing ? (
+              <div className="h-full flex flex-col items-center justify-center space-y-6 text-indigo-600">
+                <div className="relative">
+                    <div className="absolute inset-0 bg-indigo-200 rounded-full blur-xl opacity-50 animate-pulse"></div>
+                    <Loader2 className="w-12 h-12 animate-spin relative z-10" />
+                </div>
+                <div className="text-center">
+                    <p className="font-semibold text-lg text-slate-800">Analyzing encounter...</p>
+                    <p className="text-slate-500 text-sm mt-1">Extracting clinical entities and formatting.</p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500 pb-8">
+                
+                {/* SOAP Note Sections */}
+                <div className="space-y-4">
+                  {Object.entries({ 
+                      subjective: 'S', 
+                      objective: 'O', 
+                      assessment: 'A', 
+                      plan: 'P' 
+                    }).map(([key, letter]) => (
+                    
+                    <div key={key} className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm transition-all hover:shadow-md">
+                      <div className="flex items-center gap-3 mb-3">
+                          <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-700 font-bold flex items-center justify-center border border-indigo-100">
+                              {letter}
+                          </div>
+                          <h3 className="text-sm font-bold text-slate-800 uppercase tracking-widest">
+                            {key === 'subjective' ? 'Subjective' : 
+                             key === 'objective' ? 'Objective' : 
+                             key === 'assessment' ? 'Assessment' : 'Plan'}
+                          </h3>
+                      </div>
+                      <p className="text-slate-700 leading-relaxed whitespace-pre-wrap pl-[2.75rem]">
+                        {medicalRecord[key]}
+                      </p>
+                    </div>
+                  ))}
+                </div>
 
-// Reusable Sidebar Nav Item Component
-function NavItem({ icon, label, active = false }) {
-  return (
-    <div className={`flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors group ${active ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
-      {React.cloneElement(icon, { className: `h-5 w-5 ${active ? 'text-white' : 'text-slate-400 group-hover:text-white'}` })}
-      <span className="font-medium text-sm hidden lg:block">{label}</span>
-    </div>
-  );
-}
+                {/* Billing Codes Section */}
+                <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm mt-6">
+                   <div className="flex items-center gap-3 mb-4">
+                        <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 font-bold flex items-center justify-center border border-emerald-100">
+                            <Activity className="w-4 h-4" />
+                        </div>
+                        <h3 className="text-sm font-bold text-slate-800 uppercase tracking-widest">
+                        Suggested Codes
+                        </h3>
+                    </div>
+                  <div className="flex flex-col gap-2.5 pl-[2.75rem]">
+                    {medicalRecord.codes && medicalRecord.codes.length > 0 ? (
+                        medicalRecord.codes.map((code, idx) => {
+                            // Basic parsing to make the code bold if it follows "Code - Description" format
+                            const parts = code.split(' - ');
+                            const codeStr = parts[0];
+                            const descStr = parts.slice(1).join(' - ');
 
-// Reusable Tab Button Component
-function TabButton({ id, icon, label, activeTab, setActiveTab }) {
-  const isActive = activeTab === id;
-  return (
-    <button 
-      onClick={() => setActiveTab(id)}
-      className={`flex items-center gap-2 pb-3 px-1 border-b-2 transition-all text-sm font-bold ${
-        isActive ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
-      }`}
-    >
-      {React.cloneElement(icon, { className: 'h-4 w-4' })}
-      {label}
-    </button>
+                            return (
+                            <div key={idx} className="flex items-start gap-3 p-3 rounded-lg bg-slate-50 border border-slate-100">
+                                <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
+                                <div>
+                                    <span className="font-bold text-slate-800">{codeStr}</span>
+                                    {descStr && <span className="text-slate-600 ml-2">— {descStr}</span>}
+                                </div>
+                            </div>
+                            )
+                        })
+                    ) : (
+                        <p className="text-slate-500 italic">No specific codes identified.</p>
+                    )}
+                  </div>
+                </div>
+                
+              </div>
+            )}
+          </div>
+        </section>
+
+      </main>
+    </div>
   );
 }
